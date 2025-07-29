@@ -16,6 +16,8 @@ from reportlab.lib.units import inch
 from dotenv import load_dotenv
 from groq import Groq
 import re
+import asyncio
+from datetime import datetime, timedelta
 
 # Load environment variables
 BASE_DIR = Path(__file__).resolve().parent
@@ -43,6 +45,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # States
 MAIN_MENU, CHATTING, SELECTING_TEMPLATE = range(3)
+
+# Timeout settings
+INACTIVITY_TIMEOUT = 600  # 10 minutes in seconds
+user_timers = {}  # Store user timeout timers
 
 # Document types
 DOCUMENT_TYPES = {
@@ -290,9 +296,39 @@ async def generate_ai_response(prompt: str, document_type: str, user_data: dict)
         logger.error(f"Groq API error: {e}")
         return f"I'm sorry, I encountered an error with the AI service: {str(e)}"
 
+async def timeout_handler(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """Handle user inactivity timeout"""
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⏰ Session timed out due to inactivity. Use /cancel to restart."
+        )
+        # Clear user data and timer
+        context.user_data.clear()
+        if user_id in user_timers:
+            user_timers[user_id].cancel()
+            del user_timers[user_id]
+    except Exception as e:
+        logger.error(f"Timeout handler error: {e}")
+
+def reset_user_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
+    """Reset or create user inactivity timer"""
+    # Cancel existing timer
+    if user_id in user_timers:
+        user_timers[user_id].cancel()
+    
+    # Create new timer
+    loop = asyncio.get_event_loop()
+    user_timers[user_id] = loop.call_later(
+        INACTIVITY_TIMEOUT,
+        lambda: asyncio.create_task(timeout_handler(context, user_id))
+    )
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Clear any existing user data
     context.user_data.clear()
+    user_id = update.effective_user.id
+    reset_user_timer(context, user_id)
     
     keyboard = [
         [InlineKeyboardButton("Chat with AI", callback_data='chat')],
@@ -320,6 +356,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    user_id = update.effective_user.id
+    reset_user_timer(context, user_id)
     
     if query.data == 'chat':
         # Set chat mode in user data
@@ -406,6 +444,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         user_message = update.message.text
         user_id = update.effective_user.id
+        reset_user_timer(context, user_id)
         
         # Show typing indicator
         await context.bot.send_chat_action(
@@ -503,13 +542,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Message handling error: {e}")
         await update.message.reply_text(
-            "I encountered an error. Please try again or use /start to restart."
+            "I encountered an error. Please try again or use /cancel to restart."
         )
         return CHATTING
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Clear any existing user data
     context.user_data.clear()
+    user_id = update.effective_user.id
+    reset_user_timer(context, user_id)
     
     keyboard = [
         [InlineKeyboardButton("Chat with AI", callback_data='chat')],
@@ -535,15 +576,45 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text('Cancelled. Use /start to begin again.')
+    user_id = update.effective_user.id
+    
+    # Cancel user timer
+    if user_id in user_timers:
+        user_timers[user_id].cancel()
+        del user_timers[user_id]
+    
+    # Clear user data
     context.user_data.clear()
-    return ConversationHandler.END
+    
+    # Restart the bot
+    keyboard = [
+        [InlineKeyboardButton("Chat with AI", callback_data='chat')],
+        [InlineKeyboardButton("Generate Document", callback_data='generate')],
+        [InlineKeyboardButton("Help", callback_data='help')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    welcome_message = (
+        "*Welcome to AI Document Assistant!*\n\n"
+        "I can help you:\n"
+        "• Chat and get AI responses\n"
+        "• Generate professional documents\n"
+        "• Create properly formatted PDFs\n\n"
+        "Choose an option below:"
+    )
+    
+    await update.message.reply_text(
+        welcome_message,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+    return MAIN_MENU
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(f"Error: {context.error}")
     if update and hasattr(update, 'message') and update.message:
         try:
-            await update.message.reply_text('Error occurred. Please try /start to restart.')
+            await update.message.reply_text('Error occurred. Please try /cancel to restart.')
         except:
             pass
 
