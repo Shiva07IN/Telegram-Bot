@@ -301,7 +301,7 @@ async def timeout_handler(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> N
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text="⏰ Session timed out due to inactivity. Use /cancel to restart."
+            text="⏰ Session timed out. Commands: /start /menu /help /cancel"
         )
         # Clear user data and timer
         context.user_data.clear()
@@ -327,6 +327,31 @@ def reset_user_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return await menu_command(update, context)
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    help_text = (
+        "*Help*\n\n"
+        "*Commands:*\n"
+        "/start - Show main menu\n"
+        "/menu - Show main menu\n"
+        "/help - Show this help message\n"
+        "/cancel - Cancel and restart\n\n"
+        "*Features:*\n"
+        "• Chat with AI\n"
+        "• Generate documents with proper formatting\n"
+        "• Automatic data collection\n"
+        "• Professional PDF generation\n"
+    )
+    
+    keyboard = [[InlineKeyboardButton("🏠 Main Menu", callback_data='back_menu')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        help_text, 
+        parse_mode='Markdown', 
+        reply_markup=reply_markup
+    )
+    return update.message.chat.id  # Stay in current state
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -346,7 +371,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "• Writing assistance\n"
             "• Any other queries\n\n"
             "*Note:* All responses will be provided as text AND PDF format\n\n"
-            "Type /menu to return to main menu.",
+            "Commands: /start /menu /help /cancel",
             parse_mode='Markdown'
         )
         return CHATTING
@@ -370,7 +395,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "*Help*\n\n"
             "*Commands:*\n"
             "/start - Show main menu\n"
-            "/menu - Return to main menu\n\n"
+            "/menu - Show main menu\n"
+            "/cancel - Cancel and restart\n\n"
             "*Features:*\n"
             "• Chat with AI\n"
             "• Generate documents with proper formatting\n"
@@ -394,7 +420,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data['missing_fields'] = []
         
         await query.edit_message_text(
-            f"*Creating {DOCUMENT_TYPES[doc_type]}*\n\nDescribe what you need. I'll create a professional document based on your description.\n\n*Example:* \"I need an affidavit for address proof. My name is John Doe, I live at 123 Main Street, Delhi 110001\"\n\nType /menu to return to main menu.",
+            f"*Creating {DOCUMENT_TYPES[doc_type]}*\n\nDescribe what you need. I'll create a professional document based on your description.\n\n*Example:* \"I need an affidavit for address proof. My name is John Doe, I live at 123 Main Street, Delhi 110001\"\n\nCommands: /start /menu /help /cancel",
             parse_mode='Markdown'
         )
         return CHATTING
@@ -502,7 +528,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(
                 "✅ *Document Generated Successfully!*\n\n"
                 "Your document has been created and sent as PDF.\n\n"
-                "Click below to return to main menu or type /menu",
+                "Commands: /start /menu /help /cancel",
                 parse_mode='Markdown',
                 reply_markup=reply_markup
             )
@@ -516,7 +542,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Message handling error: {e}")
         await update.message.reply_text(
-            "I encountered an error. Please try again or use /cancel to restart."
+            "Error occurred. Commands: /start /menu /help /cancel"
         )
         return CHATTING
 
@@ -588,7 +614,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error(f"Error: {context.error}")
     if update and hasattr(update, 'message') and update.message:
         try:
-            await update.message.reply_text('Error occurred. Please try /cancel to restart.')
+            await update.message.reply_text('Error occurred. Commands: /start /menu /help /cancel')
         except:
             pass
 
@@ -614,20 +640,29 @@ def main() -> None:
         states={
             MAIN_MENU: [
                 CallbackQueryHandler(button_handler),
-                CommandHandler('menu', menu_command)
+                CommandHandler('menu', menu_command),
+                CommandHandler('start', start),
+                CommandHandler('help', help_command)
             ],
             CHATTING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
-                CommandHandler('menu', menu_command)
+                CommandHandler('menu', menu_command),
+                CommandHandler('start', start),
+                CommandHandler('help', help_command)
             ],
             SELECTING_TEMPLATE: [
-                CallbackQueryHandler(button_handler)
+                CallbackQueryHandler(button_handler),
+                CommandHandler('menu', menu_command),
+                CommandHandler('start', start),
+                CommandHandler('help', help_command)
             ],
 
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            CommandHandler('menu', menu_command)
+            CommandHandler('menu', menu_command),
+            CommandHandler('start', start),
+            CommandHandler('help', help_command)
         ],
     )
     
