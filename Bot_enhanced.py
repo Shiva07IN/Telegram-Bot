@@ -325,33 +325,7 @@ def reset_user_timer(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> None:
     )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    # Clear any existing user data
-    context.user_data.clear()
-    user_id = update.effective_user.id
-    reset_user_timer(context, user_id)
-    
-    keyboard = [
-        [InlineKeyboardButton("Chat with AI", callback_data='chat')],
-        [InlineKeyboardButton("Generate Document", callback_data='generate')],
-        [InlineKeyboardButton("Help", callback_data='help')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    welcome_message = (
-        "*Welcome to AI Document Assistant!*\n\n"
-        "I can help you:\n"
-        "• Chat and get AI responses\n"
-        "• Generate professional documents\n"
-        "• Create properly formatted PDFs\n\n"
-        "Choose an option below:"
-    )
-    
-    await update.message.reply_text(
-        welcome_message,
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
-    return MAIN_MENU
+    return await menu_command(update, context)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
