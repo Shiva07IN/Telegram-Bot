@@ -42,7 +42,7 @@ OUTPUT_DIR = "generated"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # States
-MAIN_MENU, CHATTING, SELECTING_TEMPLATE, COLLECTING_DATA = range(4)
+MAIN_MENU, CHATTING, SELECTING_TEMPLATE = range(3)
 
 # Document types
 DOCUMENT_TYPES = {
@@ -54,42 +54,7 @@ DOCUMENT_TYPES = {
     'custom': 'Custom Document'
 }
 
-# Required fields for each document type
-REQUIRED_FIELDS = {
-    'affidavit': ['full_name', 'address', 'purpose', 'facts'],
-    'letter': ['sender_name', 'sender_address', 'recipient_name', 'recipient_address', 'subject', 'purpose'],
-    'contract': ['party1_name', 'party1_address', 'party2_name', 'party2_address', 'subject_matter', 'terms'],
-    'certificate': ['recipient_name', 'achievement', 'issuing_authority', 'date'],
-    'application': ['applicant_name', 'applicant_address', 'organization', 'purpose', 'details'],
-    'custom': ['purpose', 'details']
-}
 
-# Field questions
-FIELD_QUESTIONS = {
-    'full_name': "What is your full name?",
-    'address': "What is your complete address with pin code?",
-    'purpose': "What is the purpose of this document?",
-    'facts': "What are the key facts or statements to include?",
-    'sender_name': "What is the sender's name?",
-    'sender_address': "What is the sender's address?",
-    'recipient_name': "Who is the recipient?",
-    'recipient_address': "What is the recipient's address?",
-    'subject': "What is the subject of the letter?",
-    'party1_name': "What is the first party's name?",
-    'party1_address': "What is the first party's address?",
-    'party2_name': "What is the second party's name?",
-    'party2_address': "What is the second party's address?",
-    'subject_matter': "What is the subject matter of the contract?",
-    'terms': "What are the key terms and conditions?",
-    'recipient_name': "Who is receiving the certificate?",
-    'achievement': "What achievement or completion is being certified?",
-    'issuing_authority': "What is the issuing authority/organization?",
-    'date': "What is the date for the certificate?",
-    'applicant_name': "What is the applicant's name?",
-    'applicant_address': "What is the applicant's address?",
-    'organization': "Which organization/department is this for?",
-    'details': "Please provide specific details:"
-}
 
 class EnhancedDocumentGenerator:
     @staticmethod
@@ -202,89 +167,117 @@ class EnhancedDocumentGenerator:
             raise e
 
 def extract_user_data(text: str, document_type: str) -> dict:
-    """Extract user data from text using regex patterns"""
+    """Extract user data from text using enhanced patterns"""
     data = {}
     
-    # Common patterns
+    # Enhanced name patterns
     name_patterns = [
-        r"(?:my name is|i am|name:)\s*([A-Za-z\s]+)",
-        r"([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"
+        r"(?:my name is|i am|name:?)\s*([A-Za-z\s]+)",
+        r"([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
+        r"I,?\s+([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"
     ]
     
+    # Enhanced address patterns
     address_patterns = [
-        r"(?:address|live at|residing at):?\s*([^.]+)",
-        r"(\d+[^,]+,[^,]+,\s*\d{6})"
+        r"(?:address|live at|residing at|from):?\s*([^.\n]+(?:\d{6}|\d{3}\s*\d{3})[^.\n]*)",
+        r"(\d+[^,\n]+,[^,\n]+,\s*\d{6})",
+        r"(?:address|live|residing).*?([^,\n]+,\s*[^,\n]+,\s*\d{6})"
     ]
     
+    # Extract name
     for pattern in name_patterns:
         match = re.search(pattern, text, re.IGNORECASE)
-        if match and not data.get('full_name'):
-            data['full_name'] = match.group(1).strip()
-            data['applicant_name'] = match.group(1).strip()
+        if match and len(match.group(1).strip().split()) >= 2:
+            name = match.group(1).strip()
+            data['full_name'] = name
+            data['applicant_name'] = name
+            data['sender_name'] = name
+            data['recipient_name'] = name
             break
     
+    # Extract address
     for pattern in address_patterns:
         match = re.search(pattern, text, re.IGNORECASE)
-        if match and not data.get('address'):
-            data['address'] = match.group(1).strip()
-            data['applicant_address'] = match.group(1).strip()
+        if match:
+            address = match.group(1).strip()
+            data['address'] = address
+            data['applicant_address'] = address
+            data['sender_address'] = address
             break
     
-    # Extract purpose
-    purpose_patterns = [
-        r"(?:purpose|for|need|want):?\s*([^.]+)",
-        r"(?:application for|request for):?\s*([^.]+)"
-    ]
-    
-    for pattern in purpose_patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match and not data.get('purpose'):
-            data['purpose'] = match.group(1).strip()
-            break
+    # Extract purpose - be more flexible
+    if not data.get('purpose'):
+        # If no explicit purpose found, use the entire text as context
+        data['purpose'] = text.strip()
     
     return data
 
-def get_missing_fields(user_data: dict, document_type: str) -> list:
-    """Get list of missing required fields"""
-    required = REQUIRED_FIELDS.get(document_type, [])
-    missing = []
-    
-    for field in required:
-        if not user_data.get(field):
-            missing.append(field)
-    
-    return missing
 
-async def generate_ai_response(prompt: str, document_type: str, user_data: dict) -> str:
-    """Generate AI response using Groq API with user data"""
+
+async def check_if_needs_more_info(prompt: str, document_type: str) -> str:
+    """Check if AI needs more information before generating document"""
     if not groq_client:
-        return "AI service not available. Please check configuration."
+        return None
     
     try:
-        # Create context from user data
-        context = ""
-        if user_data:
-            context = "User Information:\n"
-            for key, value in user_data.items():
-                if value:
-                    context += f"- {key.replace('_', ' ').title()}: {value}\n"
-            context += "\n"
+        system_prompt = f"""You are an AI assistant that determines if there's enough information to create a {document_type}. 
         
-        system_prompts = {
-            'affidavit': f"You are an expert legal document writer. Create a complete, professional affidavit with proper legal format. Use the provided user information. {context}",
-            'letter': f"You are a professional business letter writer. Create a complete formal letter with proper Indian format. Use the provided user information. {context}",
-            'contract': f"You are a contract specialist. Create a comprehensive contract with clear terms. Use the provided user information. {context}",
-            'certificate': f"You are creating official certificates. Generate a formal certificate with proper formatting. Use the provided user information. {context}",
-            'application': f"You are an expert in Indian government applications. Create authentic Indian applications with proper format (To, From, Subject structure). Use respectful language and proper Indian format. {context}",
-            'general': f"You are a professional document assistant. Create high-quality, well-structured content. Use the provided user information. {context}"
-        }
+Analyze the user's request and decide:
+        1. If there's enough information to create a complete document, respond with: "GENERATE"
+        2. If you need more specific information, respond with: "QUESTION: [ask a specific question]"
         
-        system_prompt = system_prompts.get(document_type, system_prompts['general'])
+Be smart - only ask for truly essential information that cannot be reasonably assumed or left as placeholders."""
         
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Create a {document_type} based on: {prompt}"}
+                {"role": "user", "content": f"User wants to create a {document_type}. Their request: {prompt}"}
+            ],
+            model="llama3-70b-8192",
+            temperature=0.1,
+            max_tokens=200
+        )
+        
+        response = chat_completion.choices[0].message.content.strip()
+        
+        if response.startswith("QUESTION:"):
+            return response.replace("QUESTION:", "").strip()
+        else:
+            return None
+            
+    except Exception as e:
+        logger.error(f"Info check error: {e}")
+        return None
+
+async def generate_ai_response(prompt: str, document_type: str, user_data: dict) -> str:
+    """Generate AI response using Groq API with smart data extraction"""
+    if not groq_client:
+        return "AI service not available. Please check configuration."
+    
+    try:
+        system_prompts = {
+            'affidavit': "You are an expert legal document writer. Create a complete, professional affidavit with proper legal format. Use the provided information and create a professional document.",
+            'letter': "You are a professional business letter writer. Create a complete formal letter with proper Indian format. Use the provided information to create a professional letter.",
+            'contract': "You are a contract specialist. Create a comprehensive contract with clear terms. Use the provided information to create a professional contract.",
+            'certificate': "You are creating official certificates. Generate a formal certificate with proper formatting using the provided information.",
+            'application': "You are an expert in Indian government applications. Create authentic Indian applications with proper format (To, From, Subject structure). Use respectful language and proper Indian format.",
+            'general': "You are a professional assistant. Provide helpful, well-structured responses. Be comprehensive and informative."
+        }
+        
+        system_prompt = system_prompts.get(document_type, system_prompts['general'])
+        
+        # Enhanced user prompt with extracted data
+        user_prompt = f"Create a {document_type} based on this request: {prompt}"
+        if user_data:
+            user_prompt += "\n\nExtracted information:"
+            for key, value in user_data.items():
+                if value and key != 'purpose':
+                    user_prompt += f"\n- {key.replace('_', ' ').title()}: {value}"
+        
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
             ],
             model="llama3-70b-8192",
             temperature=0.3,
@@ -389,7 +382,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data['missing_fields'] = []
         
         await query.edit_message_text(
-            f"*Creating {DOCUMENT_TYPES[doc_type]}*\n\nPlease describe what you need. Include as much detail as possible (name, address, purpose, etc.).\n\nType /menu to return to main menu.",
+            f"*Creating {DOCUMENT_TYPES[doc_type]}*\n\nDescribe what you need. I'll create a professional document based on your description.\n\n*Example:* \"I need an affidavit for address proof. My name is John Doe, I live at 123 Main Street, Delhi 110001\"\n\nType /menu to return to main menu.",
             parse_mode='Markdown'
         )
         return CHATTING
@@ -430,28 +423,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         extracted_data = extract_user_data(user_message, document_type)
         context.user_data['collected_data'].update(extracted_data)
         
-        # Check for missing fields
-        missing_fields = get_missing_fields(context.user_data['collected_data'], document_type)
-        
-        # If we're in data collection mode
-        if context.user_data.get('collecting_field'):
-            field = context.user_data['collecting_field']
-            context.user_data['collected_data'][field] = user_message
-            context.user_data.pop('collecting_field')
-            missing_fields = get_missing_fields(context.user_data['collected_data'], document_type)
-        
-        # If there are missing critical fields, ask for them
-        if missing_fields and document_type != 'general':
-            field_to_ask = missing_fields[0]
-            context.user_data['collecting_field'] = field_to_ask
-            
-            question = FIELD_QUESTIONS.get(field_to_ask, f"Please provide {field_to_ask.replace('_', ' ')}:")
-            
-            await update.message.reply_text(
-                f"I need some additional information:\n\n*{question}*",
-                parse_mode='Markdown'
-            )
-            return COLLECTING_DATA
+        # Check if AI needs more information
+        if document_type != 'general':
+            question = await check_if_needs_more_info(user_message, document_type)
+            if question:
+                await update.message.reply_text(
+                    f"I need some more information:\n\n*{question}*",
+                    parse_mode='Markdown'
+                )
+                return CHATTING
         
         # Generate AI response with collected data
         ai_response = await generate_ai_response(user_message, document_type, context.user_data['collected_data'])
@@ -528,8 +508,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return CHATTING
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # Clear any existing user data
     context.user_data.clear()
-    return await start(update, context)
+    
+    keyboard = [
+        [InlineKeyboardButton("Chat with AI", callback_data='chat')],
+        [InlineKeyboardButton("Generate Document", callback_data='generate')],
+        [InlineKeyboardButton("Help", callback_data='help')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    welcome_message = (
+        "*Welcome to AI Document Assistant!*\n\n"
+        "I can help you:\n"
+        "• Chat and get AI responses\n"
+        "• Generate professional documents\n"
+        "• Create properly formatted PDFs\n\n"
+        "Choose an option below:"
+    )
+    
+    await update.message.reply_text(
+        welcome_message,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+    return MAIN_MENU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text('Cancelled. Use /start to begin again.')
@@ -575,10 +578,7 @@ def main() -> None:
             SELECTING_TEMPLATE: [
                 CallbackQueryHandler(button_handler)
             ],
-            COLLECTING_DATA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message),
-                CommandHandler('menu', menu_command)
-            ],
+
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
