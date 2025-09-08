@@ -21,7 +21,9 @@ A Telegram bot that uses AI to process and generate documents based on user inpu
    ```
    python -m spacy download en_core_web_sm
    ```
-4. Create a `.env` file with your Telegram bot token:
+4. Create a folder name models and put yours .gguf format ai model file.
+
+5. Paste your Telegram bot taken in `.env` file :
    ```
    BOT_TOKEN=your_telegram_bot_token_here
    ```
